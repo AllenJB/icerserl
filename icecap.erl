@@ -15,9 +15,14 @@ start_server() ->
 	{ok, Listen} = gen_tcp:listen(2345, [binary, {packet, line},
 		{reuseaddr, true},
 		{active, true}]),
+	spawn(fun() -> connect_client(Listen) end).
+
+
+connect_client(Listen) ->
 	{ok, Socket} = gen_tcp:accept(Listen),
-	gen_tcp:close(Listen),
-	% Send the preauth notice
+	spawn(fun() -> connect_client(Listen) end),
+	% gen_tcp:close(Listen),
+	%% Send the preauth notice
 	event_preauth(Socket),
 	loop(Socket).
 
@@ -27,7 +32,9 @@ event_preauth(Socket) ->
 	IPStr = inet_parse:ntoa(SockIP),
 	{MegaSecs, Secs, MicroSecs} = erlang:now(),
 	MicroS = MicroSecs div 10000,
-	gen_tcp:send(Socket, io_lib:format("*;preauth;time=~p~p.~p;remote_ip=~p~n", [MegaSecs, Secs, MicroS, IPStr])).
+	SendStr0 = io_lib:format("*;preauth;time=~p~p.~p;remote_ip=", [MegaSecs, Secs, MicroS]),
+	SendStr = string:concat(SendStr0, string:concat(IPStr, "\n")),
+	gen_tcp:send(Socket, SendStr).
 
 
 loop(Socket) ->
