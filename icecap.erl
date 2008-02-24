@@ -12,19 +12,29 @@
 
 
 start_server() ->
+	ServerPid = self(),
 	{ok, Listen} = gen_tcp:listen(2345, [binary, {packet, line},
 		{reuseaddr, true},
 		{active, true}]),
-	spawn(fun() -> connect_client(Listen) end).
+	spawn(fun() -> connect_client(ServerPid, Listen) end),
+	receive
+		cmdShutdown ->
+			io:format("start_server: Shutting down listen socket~n"),
+			gen_tcp:close(Listen)
+	end.
 
 
-connect_client(Listen) ->
-	{ok, Socket} = gen_tcp:accept(Listen),
-	spawn(fun() -> connect_client(Listen) end),
-	% gen_tcp:close(Listen),
-	%% Send the preauth notice
-	event_preauth(Socket),
-	loop(Socket).
+connect_client(ServerPid, Listen) ->
+	case gen_tcp:accept(Listen) of
+		{ok, Socket} ->
+			io:format("Client connection accepted"),
+			spawn(fun() -> connect_client(ServerPid, Listen) end),
+			%% Send the preauth notice
+			event_preauth(Socket),
+			loop(Socket, ServerPid);
+		{error, closed} ->
+			io:format("Listen socket closed~n")
+	end.
 
 
 event_preauth(Socket) ->
@@ -37,18 +47,21 @@ event_preauth(Socket) ->
 	gen_tcp:send(Socket, SendStr).
 
 
-loop(Socket) ->
+loop(Socket, ServerPid) ->
 	receive
 		{tcp, Socket, <<"quit\r\n">>} ->
 			io:format("Client closed socket~n"),
 			gen_tcp:close(Socket);
+		{tcp, Socket, <<"sd\r\n">>} ->
+			io:format("Client requested server shutdown~n"),
+			ServerPid ! cmdShutdown;
 		{tcp, Socket, Bin} ->
 			io:format("Server received binary = ~p~n",[Bin]),
 			io:format("Server replying = ~p~n",[Bin]),
 			gen_tcp:send(Socket, Bin),
 			%% when you're ready enable the next message
 			% inet:setopts(Socket, [{active, once}]),
-			loop(Socket);
+			loop(Socket, ServerPid);
 		{tcp_closed, Socket} ->
 			 io:format("Server socket closed~n")
 	end.
