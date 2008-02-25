@@ -13,10 +13,11 @@
 
 start_server() ->
 	ServerPid = self(),
+	ManagerPid = spawn(fun() -> client_manager:client_manager() end),
 	{ok, Listen} = gen_tcp:listen(2345, [binary, {packet, line},
 		{reuseaddr, true},
 		{active, true}]),
-	spawn(fun() -> connect_client(ServerPid, Listen) end),
+	spawn(fun() -> connect_client(ManagerPid, ServerPid, Listen) end),
 	receive
 		cmdShutdown ->
 			io:format("start_server: Shutting down listen socket~n"),
@@ -24,14 +25,16 @@ start_server() ->
 	end.
 
 
-connect_client(ServerPid, Listen) ->
+connect_client(ManagerPid, ServerPid, Listen) ->
 	case gen_tcp:accept(Listen) of
 		{ok, Socket} ->
-			io:format("Client connection accepted"),
-			spawn(fun() -> connect_client(ServerPid, Listen) end),
+			io:format("Client connection accepted~n"),
+			spawn(fun() -> connect_client(ManagerPid, ServerPid, Listen) end),
 			%% Send the preauth notice
+			ManagerPid ! {add, Socket},
+			ManagerPid ! {broadcast, "*;client_connected;id=NotImplemented;time=NotImplemented", Socket},
 			event_preauth(Socket),
-			loop(Socket, ServerPid);
+			loop(Socket, ServerPid, ManagerPid);
 		{error, closed} ->
 			io:format("Listen socket closed~n")
 	end.
@@ -47,7 +50,7 @@ event_preauth(Socket) ->
 	gen_tcp:send(Socket, SendStr).
 
 
-loop(Socket, ServerPid) ->
+loop(Socket, ServerPid, ManagerPid) ->
 	receive
 		{tcp, Socket, <<"quit\r\n">>} ->
 			io:format("Client closed socket~n"),
@@ -55,13 +58,25 @@ loop(Socket, ServerPid) ->
 		{tcp, Socket, <<"sd\r\n">>} ->
 			io:format("Client requested server shutdown~n"),
 			ServerPid ! cmdShutdown;
+		{tcp, Socket, <<"b\r\n">>} ->
+			io:format("Broacast Message~n"),
+			ManagerPid ! {broadcast, "This is a broadcast message.~n", Socket},
+			loop(Socket, ServerPid, ManagerPid);
 		{tcp, Socket, Bin} ->
 			io:format("Server received binary = ~p~n",[Bin]),
 			io:format("Server replying = ~p~n",[Bin]),
 			gen_tcp:send(Socket, Bin),
-			%% when you're ready enable the next message
-			% inet:setopts(Socket, [{active, once}]),
-			loop(Socket, ServerPid);
+			loop(Socket, ServerPid, ManagerPid);
 		{tcp_closed, Socket} ->
-			 io:format("Server socket closed~n")
+			io:format("Server socket closed~n"),
+			ManagerPid ! {remove, Socket};
+		{broadcast, Msg, SrcClient} ->
+			case SrcClient of
+				Socket ->
+					void;
+				_ ->
+					io:format("Sending broadcast message to client~n"),
+					gen_tcp:send(Socket, string:concat("broadcast: ", Msg))
+			end,
+			loop(Socket, ServerPid, ManagerPid)
 	end.
