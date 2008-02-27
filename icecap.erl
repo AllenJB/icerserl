@@ -13,7 +13,7 @@
 
 start_server() ->
 	ServerPid = self(),
-	ManagerPid = spawn(fun() -> client_manager:client_manager() end),
+	ManagerPid = spawn(fun() -> client_manager:client_manager([]) end),
 	{ok, Listen} = gen_tcp:listen(2345, [binary, {packet, line},
 		{reuseaddr, true},
 		{active, true}]),
@@ -31,8 +31,8 @@ connect_client(ManagerPid, ServerPid, Listen) ->
 			io:format("Client connection accepted~n"),
 			spawn(fun() -> connect_client(ManagerPid, ServerPid, Listen) end),
 			%% Send the preauth notice
-			ManagerPid ! {add, Socket},
-			ManagerPid ! {broadcast, "*;client_connected;id=NotImplemented;time=NotImplemented", Socket},
+			ManagerPid ! {add, self()},
+			%ManagerPid ! {broadcast, "*;client_connected;id=NotImplemented;time=NotImplemented", Socket},
 			event_preauth(Socket),
 			loop(Socket, ServerPid, ManagerPid);
 		{error, closed} ->
@@ -60,7 +60,11 @@ loop(Socket, ServerPid, ManagerPid) ->
 			ServerPid ! cmdShutdown;
 		{tcp, Socket, <<"b\r\n">>} ->
 			io:format("Broacast Message~n"),
-			ManagerPid ! {broadcast, "This is a broadcast message.~n", Socket},
+			ManagerPid ! {broadcast, "This is a broadcast message.~n", self()},
+			loop(Socket, ServerPid, ManagerPid);
+		{tcp, Socket, <<"p\r\n">>} ->
+			io:format("Print Connected Clients~n"),
+			ManagerPid ! {print},
 			loop(Socket, ServerPid, ManagerPid);
 		{tcp, Socket, Bin} ->
 			io:format("Server received binary = ~p~n",[Bin]),
@@ -71,12 +75,15 @@ loop(Socket, ServerPid, ManagerPid) ->
 			io:format("Server socket closed~n"),
 			ManagerPid ! {remove, Socket};
 		{broadcast, Msg, SrcClient} ->
+			io:format("Sending broadcast message to client (0)~n", []),
 			case SrcClient of
 				Socket ->
-					void;
-				_ ->
-					io:format("Sending broadcast message to client~n"),
-					gen_tcp:send(Socket, string:concat("broadcast: ", Msg))
+					io:format("Ignoring message from this client~n", []);
+				Anything ->
+					io:format("Sending broadcast message to client~n", []),
+					gen_tcp:send(Socket, io_lib:format (string:concat("broadcast: ", Msg), []))
 			end,
-			loop(Socket, ServerPid, ManagerPid)
+			loop(Socket, ServerPid, ManagerPid);
+		Anything ->
+			io:format("Unhandled: ~p~n", [Anything])
 	end.
