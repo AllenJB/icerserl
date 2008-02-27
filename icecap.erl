@@ -21,7 +21,9 @@ start_server() ->
 	receive
 		cmdShutdown ->
 			io:format("start_server: Shutting down listen socket~n"),
-			gen_tcp:close(Listen)
+			gen_tcp:close(Listen),
+			io:format("start_server: Notifying client manager~n"),
+			ManagerPid ! {server_shutdown}
 	end.
 
 
@@ -54,9 +56,11 @@ loop(Socket, ServerPid, ManagerPid) ->
 	receive
 		{tcp, Socket, <<"quit\r\n">>} ->
 			io:format("Client closed socket~n"),
+			ManagerPid ! {remove, self()},
 			gen_tcp:close(Socket);
 		{tcp, Socket, <<"sd\r\n">>} ->
 			io:format("Client requested server shutdown~n"),
+			ManagerPid ! {remove, self()},
 			ServerPid ! cmdShutdown;
 		{tcp, Socket, <<"b\r\n">>} ->
 			io:format("Broacast Message~n"),
@@ -67,17 +71,18 @@ loop(Socket, ServerPid, ManagerPid) ->
 			ManagerPid ! {print},
 			loop(Socket, ServerPid, ManagerPid);
 		{tcp, Socket, Bin} ->
-			io:format("Server received binary = ~p~n",[Bin]),
-			io:format("Server replying = ~p~n",[Bin]),
+			io:format("Server received binary = ~p~n", [Bin]),
+			io:format("Server replying = ~p~n", [Bin]),
 			gen_tcp:send(Socket, Bin),
 			loop(Socket, ServerPid, ManagerPid);
 		{tcp_closed, Socket} ->
 			io:format("Server socket closed~n"),
-			ManagerPid ! {remove, Socket};
+			ManagerPid ! {remove, self()};
 		{broadcast, Msg, SrcClient} ->
 			io:format("Sending broadcast message to client (0)~n", []),
+			MyPid = self(),
 			case SrcClient of
-				Socket ->
+				MyPid ->
 					io:format("Ignoring message from this client~n", []);
 				Anything ->
 					io:format("Sending broadcast message to client~n", []),
@@ -85,5 +90,6 @@ loop(Socket, ServerPid, ManagerPid) ->
 			end,
 			loop(Socket, ServerPid, ManagerPid);
 		Anything ->
-			io:format("Unhandled: ~p~n", [Anything])
+			io:format("Unhandled: ~p~n", [Anything]),
+			loop(Socket, ServerPid, ManagerPid)
 	end.
