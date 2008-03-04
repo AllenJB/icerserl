@@ -67,7 +67,7 @@ loop(Socket, ServerPid, ManagerPid) ->
 			case SrcClient of
 				MyPid ->
 					io:format("Ignoring message from this client~n", []);
-				Anything ->
+				_ ->
 					io:format("Sending broadcast message to client~n", []),
 					gen_tcp:send(Socket, io_lib:format (string:concat("broadcast: ", Msg), []))
 			end,
@@ -79,26 +79,59 @@ loop(Socket, ServerPid, ManagerPid) ->
 			loop(Socket, ServerPid, ManagerPid)
 	end.
 
+
 process_line(ServerPid, ManagerPid, Socket, BitStringMsgIn) ->
 	MsgIn = bitstring_to_list(BitStringMsgIn),
 	Msg = string:strip(string:strip(MsgIn, right, 10), right, 13),
-	case Msg of
-		"quit" ->
+	Command = parse_command(Msg),
+	case lists:keysearch("command", 1, Command) of
+		{value, {"command", "quit"}} ->
 			io:format("Client closed socket~n"),
 			ManagerPid ! {remove, self()},
 			gen_tcp:close(Socket),
 			self() ! {quit};
-		"sd" ->
+		{value, {"command", "sd"}} ->
 			io:format("Client requested server shutdown~n"),
 			ManagerPid ! {remove, self()},
 			ServerPid ! cmdShutdown;
-		"b" ->
+		{value, {"command", "b"}} ->
 			io:format("Broacast Message~n"),
 			ManagerPid ! {broadcast, "This is a broadcast message.~n", self()};
-		"p" ->
+		{value, {"command", "p"}} ->
 			io:format("Print Connected Clients~n"),
 			ManagerPid ! {print};
+		false ->
+			io:format("No command given: ~p: ~p~n", [self(), Msg]),
+			gen_tcp:send(Socket, io_lib:format("No command given: ~p~n", [Msg]));
 		Anything ->
-			io:format("~p: ~p~n", [self(), Msg]),
-			gen_tcp:send(Socket, io_lib:format("~p~n", [Anything]))
+			io:format("Unrecognised command: ~p: ~p~n", [self(), Msg]),
+			gen_tcp:send(Socket, io_lib:format("Unrecognised command: ~p~n", [Anything]))
 	end.
+
+
+%% Parse a command string and return the hashmap of key/value pairs
+%% Format: key=value;key1=value1
+parse_command(Command) ->
+	Pairs = string:tokens(Command, ";"),
+	parse_command_pair(Pairs, []).
+
+parse_command_pair([], Hash) ->
+	Hash;
+parse_command_pair([""|Pairs], Hash) ->
+	parse_command_pair(Pairs, Hash);
+parse_command_pair([H|Pairs], Hash) ->
+	KVals = string:tokens(H, "="),
+	if
+		length(KVals) == 0 ->
+			parse_command_pair(Pairs, Hash);
+		true ->
+			void
+	end,
+	Value = case length(KVals) of
+		1 ->
+			undefined;
+		_ ->
+			string:join(lists:nthtail(1, KVals), "=")
+	end,
+	NewHash = Hash ++ [{hd(KVals), Value}],
+	parse_command_pair(Pairs, NewHash).
