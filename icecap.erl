@@ -1,23 +1,15 @@
-%% ---
-%%  Excerpted from "Programming Erlang",
-%%  published by The Pragmatic Bookshelf.
-%%  Copyrights apply to this code. It may not be used to create training material,
-%%  courses, books, articles, and the like. Contact us if you are in doubt.
-%%  We make no guarantees that this code is fit for any purpose.
-%%  Visit http://www.pragmaticprogrammer.com/titles/jaerlang for more book information.
-%%---
 -module(icecap).
 -compile(export_all).
--import(lists, [reverse/1]).
 
 
 start_server() ->
 	ServerPid = self(),
 	ManagerPid = spawn(fun() -> client_manager:client_manager([]) end),
+	EventMgr = spawn(fun() -> event_manager:event_manager(ManagerPid, [], 0) end),
 	{ok, Listen} = gen_tcp:listen(2345, [binary, {packet, line},
 		{reuseaddr, true},
 		{active, true}]),
-	spawn(fun() -> connect_client(ManagerPid, ServerPid, Listen) end),
+	spawn(fun() -> connect_client(EventMgr, ManagerPid, ServerPid, Listen) end),
 	receive
 		cmdShutdown ->
 			io:format("start_server: Shutting down listen socket~n"),
@@ -27,30 +19,33 @@ start_server() ->
 	end.
 
 
-connect_client(ManagerPid, ServerPid, Listen) ->
+connect_client(EventMgr, ManagerPid, ServerPid, Listen) ->
 	case gen_tcp:accept(Listen) of
 		{ok, Socket} ->
 			io:format("Client connection accepted~n"),
-			spawn(fun() -> connect_client(ManagerPid, ServerPid, Listen) end),
+			spawn(fun() -> connect_client(EventMgr, ManagerPid, ServerPid, Listen) end),
 			%% Send the preauth notice
 			ManagerPid ! {add, self()},
-			event_preauth(ManagerPid, Socket),
+			event_preauth(EventMgr, ManagerPid, Socket),
 			loop(Socket, ServerPid, ManagerPid);
 		{error, closed} ->
 			io:format("Listen socket closed~n")
 	end.
 
 
-event_preauth(ManagerPid, Socket) ->
+event_preauth(EventMgr, ManagerPid, Socket) ->
 	{ok, {SockIP, _}} = inet:peername(Socket),
-	IPStr = inet_parse:ntoa(SockIP),
-	{MegaSecs, Secs, MicroSecs} = erlang:now(),
-	MicroS = MicroSecs div 10000,
-	SendStr0 = io_lib:format("*;preauth;time=~p~p.~p;remote_ip=", [MegaSecs, Secs, MicroS]),
-	SendStr = string:concat(SendStr0, string:concat(IPStr, "\n")),
-	gen_tcp:send(Socket, SendStr),
-	SendStr1 = io_lib:format("*;client_connected;id=NotImplemented;time=~p~p.~p~n", [MegaSecs, Secs, MicroS]),
-	ManagerPid ! {broadcast, SendStr1, self()}.
+%	IPStr = inet_parse:ntoa(SockIP),
+%	SendStr0 = io_lib:format("*;preauth;time=~p;remote_ip=", [get_timestamp(now())]),
+%	SendStr = string:concat(SendStr0, string:concat(IPStr, "\n")),
+%	gen_tcp:send(Socket, SendStr),
+%	SendStr1 = io_lib:format("*;client_connected;id=NotImplemented;time=~p~p.~p~n", [MegaSecs, Secs, MicroS]),
+%	ManagerPid ! {broadcast, SendStr1, self()}.
+	EventMgr ! {add, self(), source, {preauth, now(), [{remote_ip, inet_parse:ntoa(SockIP)}]}}.
+
+
+get_timestamp({MegaSecs, Secs, MicroSecs}) ->
+	integer_to_list(MegaSecs) ++ integer_to_list(Secs) ++ "." ++ integer_to_list(MicroSecs).
 
 
 loop(Socket, ServerPid, ManagerPid) ->
@@ -61,16 +56,17 @@ loop(Socket, ServerPid, ManagerPid) ->
 		{tcp_closed, Socket} ->
 			io:format("Server socket closed~n"),
 			ManagerPid ! {remove, self()};
-		{broadcast, Msg, SrcClient} ->
-			io:format("Sending broadcast message to client (0)~n", []),
+		{broadcast, Event, SrcClient} ->
 			MyPid = self(),
 			case SrcClient of
 				MyPid ->
-					io:format("Ignoring message from this client~n", []);
+					void;
 				_ ->
-					io:format("Sending broadcast message to client~n", []),
-					gen_tcp:send(Socket, io_lib:format (string:concat("broadcast: ", Msg), []))
+					gen_tcp:send(Socket, event_to_string(Event))
 			end,
+			loop(Socket, ServerPid, ManagerPid);
+		{event, Id, Event} ->
+			gen_tcp:send(Socket, event_to_string({event, Id, Event})),
 			loop(Socket, ServerPid, ManagerPid);
 		{quit} ->
 			void;
@@ -78,6 +74,22 @@ loop(Socket, ServerPid, ManagerPid) ->
 			io:format("Unhandled: ~p~n", [Anything]),
 			loop(Socket, ServerPid, ManagerPid)
 	end.
+
+
+event_to_string({event, Id, {EventType, TimeStamp, Params}}) ->
+	io_lib:format("*;"++ atom_to_list(EventType) ++";id=~p;time="++ get_timestamp(TimeStamp) ++";"++ params_to_string(Params) ++"~n", [Id]).
+
+
+params_to_string([]) ->
+	"";
+params_to_string(Params) ->
+	string:join(kvpairs_to_string(Params, []), ";").
+
+
+kvpairs_to_string([], List) ->
+	List;
+kvpairs_to_string([{Key, Value}|Params], List) ->
+	kvpairs_to_string(Params, List ++ [atom_to_list(Key) ++ "=" ++ Value]).
 
 
 process_line(ServerPid, ManagerPid, Socket, BitStringMsgIn) ->
@@ -114,6 +126,7 @@ process_line(ServerPid, ManagerPid, Socket, BitStringMsgIn) ->
 parse_command(Command) ->
 	Pairs = string:tokens(Command, ";"),
 	parse_command_pair(Pairs, []).
+
 
 parse_command_pair([], Hash) ->
 	Hash;
