@@ -1,0 +1,11 @@
+TODO List
+
+- Runtime configuration store
+- Permanent config store
+- Command & response handling
+  - Ability to create presences, channels, networks and servers
+- An actual IRC connection!
+  - Handling for presences, channels, networks and servers
+  - Other things
+- Multiple protocol support
+  - MSN
