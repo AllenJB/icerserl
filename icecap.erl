@@ -12,10 +12,9 @@ start_server() ->
 	spawn(fun() -> connect_client(EventMgr, ManagerPid, ServerPid, Listen) end),
 	receive
 		cmdShutdown ->
-			io:format("start_server: Shutting down listen socket~n"),
 			gen_tcp:close(Listen),
-			io:format("start_server: Notifying client manager~n"),
-			ManagerPid ! {server_shutdown}
+			ManagerPid ! {server_shutdown},
+			EventMgr ! {server_shutdown}
 	end.
 
 
@@ -24,23 +23,16 @@ connect_client(EventMgr, ManagerPid, ServerPid, Listen) ->
 		{ok, Socket} ->
 			io:format("Client connection accepted~n"),
 			spawn(fun() -> connect_client(EventMgr, ManagerPid, ServerPid, Listen) end),
-			%% Send the preauth notice
 			ManagerPid ! {add, self()},
-			event_preauth(EventMgr, ManagerPid, Socket),
+			event_preauth(EventMgr, Socket),
 			loop(Socket, ServerPid, ManagerPid);
 		{error, closed} ->
 			io:format("Listen socket closed~n")
 	end.
 
 
-event_preauth(EventMgr, ManagerPid, Socket) ->
+event_preauth(EventMgr, Socket) ->
 	{ok, {SockIP, _}} = inet:peername(Socket),
-%	IPStr = inet_parse:ntoa(SockIP),
-%	SendStr0 = io_lib:format("*;preauth;time=~p;remote_ip=", [get_timestamp(now())]),
-%	SendStr = string:concat(SendStr0, string:concat(IPStr, "\n")),
-%	gen_tcp:send(Socket, SendStr),
-%	SendStr1 = io_lib:format("*;client_connected;id=NotImplemented;time=~p~p.~p~n", [MegaSecs, Secs, MicroS]),
-%	ManagerPid ! {broadcast, SendStr1, self()}.
 	EventMgr ! {add, self(), source, {preauth, now(), [{remote_ip, inet_parse:ntoa(SockIP)}]}}.
 
 
@@ -68,6 +60,9 @@ loop(Socket, ServerPid, ManagerPid) ->
 		{event, Id, Event} ->
 			gen_tcp:send(Socket, event_to_string({event, Id, Event})),
 			loop(Socket, ServerPid, ManagerPid);
+		{server_shutdown} ->
+			gen_tcp:send(Socket, "*;server_shutdown\n"),
+			gen_tcp:close(Socket);
 		{quit} ->
 			void;
 		Anything ->
@@ -104,7 +99,7 @@ process_line(ServerPid, ManagerPid, Socket, BitStringMsgIn) ->
 			self() ! {quit};
 		{value, {"command", "sd"}} ->
 			io:format("Client requested server shutdown~n"),
-			ManagerPid ! {remove, self()},
+%			ManagerPid ! {remove, self()},
 			ServerPid ! cmdShutdown;
 		{value, {"command", "b"}} ->
 			io:format("Broacast Message~n"),

@@ -15,6 +15,6 @@ event_manager(ClientMgr, Events, Id) ->
 					Source ! {event, Id, Event}
 			end,
 			event_manager(ClientMgr, Events ++ Event, Id + 1);
-		{shutdown} ->
+		{server_shutdown} ->
 			void
 	end.

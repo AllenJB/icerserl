@@ -15,8 +15,9 @@ client_manager(Clients) ->
 			lists:map (fun(Client) -> io:format("Connected client: ~p~n", [Client]) end, Clients),
 			client_manager(Clients);
 		{server_shutdown} ->
-			put (serverShutdown, true),
-			client_manager(Clients);
+%			put (serverShutdown, true),
+%			client_manager(Clients);
+			lists:map (fun(Client) -> Client ! {server_shutdown} end, Clients);
 		Anything ->
 			io:format("Unhandled: ~p~n", [Anything]),
 			client_manager(Clients)
