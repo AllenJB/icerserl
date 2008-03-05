@@ -99,7 +99,6 @@ process_line(ServerPid, ManagerPid, Socket, BitStringMsgIn) ->
 			self() ! {quit};
 		{value, {"command", "sd"}} ->
 			io:format("Client requested server shutdown~n"),
-%			ManagerPid ! {remove, self()},
 			ServerPid ! cmdShutdown;
 		{value, {"command", "b"}} ->
 			io:format("Broacast Message~n"),
