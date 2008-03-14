@@ -9,3 +9,9 @@ TODO List
   - Other things
 - Multiple protocol support
   - MSN
+
+
+{network, {Name, Protocol}}
+{gateway, {Name, Network, Host}}
+{localPresence, {MyPresence, Network}}
+{channel, {Name, Network, MyPresence}}
